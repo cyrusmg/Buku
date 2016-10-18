@@ -1347,6 +1347,24 @@ def parse_tags(keywords=None):
     return '%s%s%s' % (DELIMITER, DELIMITER.join(sortedTags), DELIMITER)
 
 
+def prompt_main():
+    '''Show the main prompt for next set of options
+
+    Returns: user input string or empty string on Exception
+    '''
+
+    try:
+        nav = input('buku: ')
+        if not nav:
+            nav = input('buku: ')
+            if not nav:
+                return 'q'
+
+        return nav
+    except EOFError:
+        return 'q'
+
+
 def prompt(results, noninteractive=False, delete=False):
     '''Show each matching result from a search and prompt'''
 
@@ -1793,6 +1811,9 @@ if __name__ == '__main__':
            metavar='N', help=argparse.SUPPRESS)
     addarg('-z', '--debug', dest='debug', action='store_true',
            help=argparse.SUPPRESS)
+    # Option quit is undocumented
+    addarg('-q', '--quit', dest='quit', action='store_true',
+           help=argparse.SUPPRESS)
 
     # Show help and exit if no arguments
     if len(sys.argv) < 2:
@@ -1802,201 +1823,222 @@ if __name__ == '__main__':
     # Parse the arguments
     args = argparser.parse_args()
 
-    # Show help and exit if help requested
-    if args.help:
-        argparser.print_help(sys.stderr)
+    if args.quit:
         sys.exit(0)
-
-    # Assign the values to globals
-    if tagManual is not None and len(args.tag) > 0:
-        tagManual = args.tag
-    if titleManual is not None and len(args.title) > 0:
-        titleManual = ' '.join(args.title)
-    if description is not None and len(args.desc) > 0:
-        description = ' '.join(args.desc)
-    if args.jsonOutput:
-        import json
-    if args.debug:
-        logger.setLevel(logging.DEBUG)
-        logger.debug('Version %s', _VERSION_)
 
     # Move pre-1.9 database to new location
     # BukuDb.move_legacy_dbfile()
 
-    # Handle encrypt/decrypt options at top priority
-    if args.encrypt is not None:
-        BukuCrypt.encrypt_file(args.encrypt)
-
-    if args.decrypt is not None:
-        BukuCrypt.decrypt_file(args.decrypt)
-
     # Initialize the database and get handles
     bdb = BukuDb(args.noninteractive, args.jsonOutput, args.showOpt)
 
-    # Add a record
-    if args.addurl is not None:
-        # Parse tags into a comma-separated string
-        tags = DELIMITER
-        keywords = args.addurl
-        if tagManual is not None:
-            if tagManual[0] == '+' and len(tagManual) == 1:
-                pass
-            elif tagManual[0] == '+':
-                tagManual = tagManual[1:]
-                # In case of add, args.addurl may have URL followed by tags
-                # Add DELIMITER as url+tags may not end with comma
-                keywords = args.addurl + [DELIMITER] + tagManual
-            else:
-                keywords = args.addurl + [DELIMITER] + tagManual
+    reparse = False
 
-        if len(keywords) > 1:
-            tags = parse_tags(keywords[1:])
+    while True:
+        if reparse:
+            next_input = prompt_main()
+            args = argparser.parse_args(next_input.split())
 
-        bdb.add_bookmark(args.addurl[0], titleManual, tags, description)
+            if args.quit:
+                # Close DB connection and quit
+                bdb.close_quit(0)
 
-    # Update record
-    if update:
-        if args.url is not None:
-            new_url = args.url[0]
+            # Reset globals
+            update = False
+            tagManual = None
+            titleManual = None
+            description = None
+            tagsearch = False
+            titleData = None
         else:
-            new_url = ''
+            reparse = True
 
-        append = False
-        delete = False
-        if tagManual is not None:
-            if (tagManual[0] == '+' or tagManual[0] == '-') \
-                    and len(tagManual) == 1:
-                logger.error('Please specify a tag')
-                bdb.close_quit(1)
-            elif tagManual[0] == '+':
-                tagManual = tagManual[1:]
-                append = True
-            elif tagManual[0] == '-':
-                tagManual = tagManual[1:]
-                delete = True
+        # Show help and exit if help requested
+        if args.help:
+            argparser.print_help(sys.stderr)
+            sys.exit(0)
 
-        # Parse tags into a comma-separated string
-        tags = parse_tags(tagManual)
+        # Assign the values to globals
+        if tagManual is not None and len(args.tag) > 0:
+            tagManual = args.tag
+        if titleManual is not None and len(args.title) > 0:
+            titleManual = ' '.join(args.title)
+        if description is not None and len(args.desc) > 0:
+            description = ' '.join(args.desc)
+        if args.jsonOutput:
+            import json
+        if args.debug:
+            logger.setLevel(logging.DEBUG)
+            logger.debug('Version %s', _VERSION_)
 
-        if len(args.update) == 0:
-            bdb.update_bookmark(0, new_url, titleManual, tags,
-                                description, append, delete)
-        else:
-            for idx in args.update:
-                if is_int(idx):
-                    bdb.update_bookmark(int(idx), new_url, titleManual, tags,
-                                        description, append, delete)
-                elif '-' in idx and is_int(idx.split('-')[0]) \
-                        and is_int(idx.split('-')[1]):
-                    lower = int(idx.split('-')[0])
-                    upper = int(idx.split('-')[1])
-                    if lower > upper:
-                        lower, upper = upper, lower
-                    for _id in range(lower, upper + 1):
-                        bdb.update_bookmark(_id, new_url, titleManual, tags,
-                                            description, append, delete)
+        # Handle encrypt/decrypt options at top priority
+        if args.encrypt is not None:
+            BukuCrypt.encrypt_file(args.encrypt)
 
-    # Search URLs, titles, tags for any keyword and delete if wanted
-    if args.sany is not None:
-        bdb.searchdb(args.sany, False, (args.delete is not None), args.deep)
+        if args.decrypt is not None:
+            BukuCrypt.decrypt_file(args.decrypt)
 
-    # Search URLs, titles, tags with all keywords and delete if wanted
-    elif args.sall is not None:
-        if args.sall[0] == 'blank' and len(args.sall) == 1:
-            bdb.print_bookmark(0, True)
-        else:
-            bdb.searchdb(args.sall, True, (args.delete is not None), args.deep)
-
-    # Search bookmarks by tag and delete if wanted
-    elif tagsearch:
-        if len(args.stag) > 0:
-            tag = '%s%s%s' % (DELIMITER, ' '.join(args.stag).strip(DELIMITER),
-                              DELIMITER)
-            bdb.search_by_tag(tag, (args.delete is not None))
-        else:
-            bdb.list_tags()
-
-    # Delete record(s)
-    elif (args.delete is not None):
-        if len(args.delete) == 0:
-            bdb.delete_bookmark(0)
-        elif len(args.delete) == 1 and '-' in args.delete[0]:
-            vals = str(args.delete[0]).split('-')
-            if len(vals) == 2 and is_int(vals[0]) and is_int(vals[1]):
-                if int(vals[0]) == int(vals[1]):
-                    bdb.delete_bookmark(int(vals[0]))
-                elif int(vals[0]) < int(vals[1]):
-                    bdb.delete_bookmark(0, int(vals[0]), int(vals[1]), True)
+        # Add a record
+        if args.addurl is not None:
+            # Parse tags into a comma-separated string
+            tags = DELIMITER
+            keywords = args.addurl
+            if tagManual is not None:
+                if tagManual[0] == '+' and len(tagManual) == 1:
+                    pass
+                elif tagManual[0] == '+':
+                    tagManual = tagManual[1:]
+                    # In case of add, args.addurl may have URL followed by tags
+                    # Add DELIMITER as url+tags may not end with comma
+                    keywords = args.addurl + [DELIMITER] + tagManual
                 else:
-                    bdb.delete_bookmark(0, int(vals[1]), int(vals[0]), True)
+                    keywords = args.addurl + [DELIMITER] + tagManual
+
+            if len(keywords) > 1:
+                tags = parse_tags(keywords[1:])
+
+            bdb.add_bookmark(args.addurl[0], titleManual, tags, description)
+
+        # Update record
+        if update:
+            if args.url is not None:
+                new_url = args.url[0]
             else:
-                logger.error('Incorrect index or range')
-                bdb.close_quit(1)
-        else:
-            ids = []
-            # Select the unique indices
-            for idx in args.delete:
-                if idx not in ids:
-                    ids += (idx,)
+                new_url = ''
 
-            try:
-                # Index delete order - highest to lowest
-                ids.sort(key=lambda x: int(x), reverse=True)
-                for idx in ids:
-                    bdb.delete_bookmark(int(idx))
-            except ValueError as e:
-                logger.error('Incorrect index or range')
-
-    # Print records
-    if args.print is not None:
-        if len(args.print) == 0:
-            bdb.print_bookmark(0)
-        else:
-            for idx in args.print:
-                if is_int(idx):
-                    bdb.print_bookmark(int(idx))
-                elif '-' in idx and is_int(idx.split('-')[0]) \
-                        and is_int(idx.split('-')[1]):
-                    lower = int(idx.split('-')[0])
-                    upper = int(idx.split('-')[1])
-                    if lower > upper:
-                        lower, upper = upper, lower
-                    for _id in range(lower, upper + 1):
-                        bdb.print_bookmark(_id)
-                else:
-                    logger.error('Invalid index or range')
+            append = False
+            delete = False
+            if tagManual is not None:
+                if (tagManual[0] == '+' or tagManual[0] == '-') \
+                        and len(tagManual) == 1:
+                    logger.error('Please specify a tag')
                     bdb.close_quit(1)
+                elif tagManual[0] == '+':
+                    tagManual = tagManual[1:]
+                    append = True
+                elif tagManual[0] == '-':
+                    tagManual = tagManual[1:]
+                    delete = True
 
-    # Replace a tag in DB
-    if args.replace is not None:
-        if len(args.replace) == 1:
-            bdb.replace_tag(args.replace[0])
-        else:
-            bdb.replace_tag(args.replace[0], args.replace[1:])
+            # Parse tags into a comma-separated string
+            tags = parse_tags(tagManual)
 
-    # Export bookmarks
-    if args.export is not None:
-        if args.tag is None:
-            bdb.export_bookmark(args.export[0])
-        elif len(args.tag) == 0:
-            logger.error('Missing tag')
-        else:
-            bdb.export_bookmark(args.export[0], args.tag)
+            if len(args.update) == 0:
+                bdb.update_bookmark(0, new_url, titleManual, tags,
+                                    description, append, delete)
+            else:
+                for idx in args.update:
+                    if is_int(idx):
+                        bdb.update_bookmark(int(idx), new_url, titleManual, tags,
+                                            description, append, delete)
+                    elif '-' in idx and is_int(idx.split('-')[0]) \
+                            and is_int(idx.split('-')[1]):
+                        lower = int(idx.split('-')[0])
+                        upper = int(idx.split('-')[1])
+                        if lower > upper:
+                            lower, upper = upper, lower
+                        for _id in range(lower, upper + 1):
+                            bdb.update_bookmark(_id, new_url, titleManual, tags,
+                                                description, append, delete)
 
-    # Import bookmarks
-    if args.imports is not None:
-        bdb.import_bookmark(args.imports[0])
+        # Search URLs, titles, tags for any keyword and delete if wanted
+        if args.sany is not None:
+            bdb.searchdb(args.sany, False, (args.delete is not None), args.deep)
 
-    # Merge a database file and exit
-    if args.merge is not None:
-        bdb.mergedb(args.merge[0])
+        # Search URLs, titles, tags with all keywords and delete if wanted
+        elif args.sall is not None:
+            if args.sall[0] == 'blank' and len(args.sall) == 1:
+                bdb.print_bookmark(0, True)
+            else:
+                bdb.searchdb(args.sall, True, (args.delete is not None), args.deep)
 
-    # Open URL in browser
-    if args.openurl is not None:
-        if args.openurl < 0:
-            logger.error('Index must be >= 0')
-            bdb.close_quit(1)
-        bdb.browse_by_index(args.openurl)
+        # Search bookmarks by tag and delete if wanted
+        elif tagsearch:
+            if len(args.stag) > 0:
+                tag = '%s%s%s' % (DELIMITER, ' '.join(args.stag).strip(DELIMITER),
+                                  DELIMITER)
+                bdb.search_by_tag(tag, (args.delete is not None))
+            else:
+                bdb.list_tags()
 
-    # Close DB connection and quit
-    bdb.close_quit(0)
+        # Delete record(s)
+        elif (args.delete is not None):
+            if len(args.delete) == 0:
+                bdb.delete_bookmark(0)
+            elif len(args.delete) == 1 and '-' in args.delete[0]:
+                vals = str(args.delete[0]).split('-')
+                if len(vals) == 2 and is_int(vals[0]) and is_int(vals[1]):
+                    if int(vals[0]) == int(vals[1]):
+                        bdb.delete_bookmark(int(vals[0]))
+                    elif int(vals[0]) < int(vals[1]):
+                        bdb.delete_bookmark(0, int(vals[0]), int(vals[1]), True)
+                    else:
+                        bdb.delete_bookmark(0, int(vals[1]), int(vals[0]), True)
+                else:
+                    logger.error('Incorrect index or range')
+                    bdb.close_quit(1)
+            else:
+                ids = []
+                # Select the unique indices
+                for idx in args.delete:
+                    if idx not in ids:
+                        ids += (idx,)
+
+                try:
+                    # Index delete order - highest to lowest
+                    ids.sort(key=lambda x: int(x), reverse=True)
+                    for idx in ids:
+                        bdb.delete_bookmark(int(idx))
+                except ValueError as e:
+                    logger.error('Incorrect index or range')
+
+        # Print records
+        if args.print is not None:
+            if len(args.print) == 0:
+                bdb.print_bookmark(0)
+            else:
+                for idx in args.print:
+                    if is_int(idx):
+                        bdb.print_bookmark(int(idx))
+                    elif '-' in idx and is_int(idx.split('-')[0]) \
+                            and is_int(idx.split('-')[1]):
+                        lower = int(idx.split('-')[0])
+                        upper = int(idx.split('-')[1])
+                        if lower > upper:
+                            lower, upper = upper, lower
+                        for _id in range(lower, upper + 1):
+                            bdb.print_bookmark(_id)
+                    else:
+                        logger.error('Invalid index or range')
+                        bdb.close_quit(1)
+
+        # Replace a tag in DB
+        if args.replace is not None:
+            if len(args.replace) == 1:
+                bdb.replace_tag(args.replace[0])
+            else:
+                bdb.replace_tag(args.replace[0], args.replace[1:])
+
+        # Export bookmarks
+        if args.export is not None:
+            if args.tag is None:
+                bdb.export_bookmark(args.export[0])
+            elif len(args.tag) == 0:
+                logger.error('Missing tag')
+            else:
+                bdb.export_bookmark(args.export[0], args.tag)
+
+        # Import bookmarks
+        if args.imports is not None:
+            bdb.import_bookmark(args.imports[0])
+
+        # Merge a database file and exit
+        if args.merge is not None:
+            bdb.mergedb(args.merge[0])
+
+        # Open URL in browser
+        if args.openurl is not None:
+            if args.openurl < 0:
+                logger.error('Index must be >= 0')
+                bdb.close_quit(1)
+            bdb.browse_by_index(args.openurl)
